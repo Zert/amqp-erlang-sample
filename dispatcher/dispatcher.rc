@@ -1,0 +1,19 @@
+#!/bin/sh
+
+APPNAME=dispatcher
+
+if [ "x"$1 = "xsasl" ]; then
+	OPTS=" -boot start_sasl "
+fi
+
+HOSTNAME=`hostname`
+HOST=${HOSTNAME:-localhost}
+SNAME="$APPNAME"@"$HOST"
+
+erl -pa ebin \
+	-s $APPNAME \
+	-sname $SNAME \
+	-config $APPNAME \
+	+K true \
+	$OPTS \
+	-setcookie secret
