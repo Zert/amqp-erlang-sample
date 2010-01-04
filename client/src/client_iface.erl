@@ -101,7 +101,7 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
                               delivery_tag = DeliveryTag,
                               exchange = Exch,
                               routing_key = RK},
-             #content{payload_fragments_rev = [Data]} = Content},
+             #content{payload_fragments_rev = RevData} = Content},
             #state{conn = _Conn} = State) ->
     ?DBG("ConsumerTag: ~p"
          "~nDeliveryTag: ~p"
@@ -110,6 +110,7 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
          "~nContent: ~p"
          "~n",
          [CTag, DeliveryTag, Exch, RK, Content]),
+    Data = iolist_to_binary(lists:reverse(RevData)),
     D = binary_to_term(Data),
     ?INFO("Data: ~p", [D]),
     {noreply, State};

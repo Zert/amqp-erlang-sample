@@ -76,7 +76,7 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
                               delivery_tag = DeliveryTag,
                               exchange = Exch,
                               routing_key = RK},
-             #content{payload_fragments_rev = [Data]} = Content},
+             #content{payload_fragments_rev = RevData} = Content},
             StateName,
             #state{channel = Channel, croute = CRoutKey} = StateData) ->
     ?DBG("ConsumerTag: ~p"
@@ -86,7 +86,8 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
          "~nContent: ~p"
          "~n",
          [CTag, DeliveryTag, Exch, RK, Content]),
-    D = binary_to_term(Data),
+    Data = iolist_to_binary(lists:reverse(RevData)),
+    D = try binary_to_term(Data) catch _:_ -> error end,
     ?INFO("Data: ~p", [D]),
     Reply = term_to_binary({reply, D}),
 	lib_amqp:publish(Channel, Exch, CRoutKey, Reply),
