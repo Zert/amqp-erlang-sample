@@ -5,8 +5,7 @@
 
 -include("client.hrl").
 
--include_lib("rabbitmq_server/include/rabbit.hrl").
--include_lib("rabbitmq_server/include/rabbit_framing.hrl").
+-include_lib("rabbitmq_client/include/amqp_client.hrl").
 
 -export([start_link/0]).
 
@@ -49,32 +48,37 @@ init(_) ->
     Exch = <<"dispatcher.adapter">>,
     BrokerRoutKey = <<"dispatcher.main">>,
 
-    Connection = amqp_connection:start(User, Password, Host, Realm),
-    Channel = lib_amqp:start_channel(Connection),
+    AP = #amqp_params{username = User,
+                      password = Password,
+                      virtual_host = Realm,
+                      host = Host},
 
-    lib_amqp:declare_exchange(Channel, Exch),   % Must be declared by dispatcher
+    Connection = amqp_connection:start_network(AP),
+    Channel = amqp_connection:open_channel(Connection),
 
+    amqp_channel:call(
+      Channel, #'exchange.declare'{exchange    = Exch,
+                                   auto_delete = true}),
 
-    %% Uniq = term_to_binary({node(), make_ref()}),
-    Uniq = list_to_binary(ssl_base64:encode(erlang:md5(term_to_binary(make_ref())))),
+    Uniq = base64:encode(erlang:md5(term_to_binary(make_ref()))),
     ?DBG("Uniq: ~p", [Uniq]),
     CRoutKey = Queue = <<"client.main.", Uniq/binary>>,
     SRoutKey = <<"client.serv.", Uniq/binary>>,
     ?DBG("Queue: ~p", [Queue]),
 
+    amqp_channel:call(
+      Channel, #'queue.declare'{queue       = Queue,
+                                auto_delete = true}),
 
+    amqp_channel:call(
+      Channel, #'queue.bind'{queue       = Queue,
+                             routing_key = CRoutKey,
+                             exchange    = Exch}),
 
-    lib_amqp:declare_queue(Channel, Queue),
-    lib_amqp:bind_queue(Channel, Exch, Queue, CRoutKey),
-
-    Tag = lib_amqp:subscribe(Channel, Queue, self()),
+    Tag = amqp_channel:subscribe(
+            Channel, #'basic.consume'{queue = Queue},
+            self()),
     ?DBG("Tag: ~p", [Tag]),
-
-    %% lib_amqp:bind_queue(Channel, Exch, CQueue, CRoutKey),
-    %% Tag = lib_amqp:subscribe(Channel, CQueue, self()),
-    %% ?DBG("Tag: ~p", [Tag]),
-
-
 
     ?DBG("Client iface started", []),
     self() ! {register},
@@ -101,7 +105,7 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
                               delivery_tag = DeliveryTag,
                               exchange = Exch,
                               routing_key = RK},
-             #content{payload_fragments_rev = RevData} = Content},
+             #amqp_msg{payload = Data} = Content},
             #state{conn = _Conn} = State) ->
     ?DBG("ConsumerTag: ~p"
          "~nDeliveryTag: ~p"
@@ -110,24 +114,31 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
          "~nContent: ~p"
          "~n",
          [CTag, DeliveryTag, Exch, RK, Content]),
-    Data = iolist_to_binary(lists:reverse(RevData)),
     D = binary_to_term(Data),
     ?INFO("Data: ~p", [D]),
     {noreply, State};
 handle_info({register}, #state{conn = #conn{channel = Channel,
                                             exchange = Exch,
                                             broker = BrokerRoutKey},
-                              uniq = Uniq} = State) ->
+                               uniq = Uniq} = State) ->
     ?DBG("Registration on: ~p", [BrokerRoutKey]),
 	Payload = term_to_binary({register, Uniq}),
-	lib_amqp:publish(Channel, Exch, BrokerRoutKey, Payload),
+    amqp_channel:call(Channel,
+                      #'basic.publish'{exchange    = Exch,
+                                       routing_key = BrokerRoutKey},
+                      #amqp_msg{props   = #'P_basic'{},
+                                payload = Payload}),
     {noreply, State};
 handle_info({msg, Msg}, #state{conn = #conn{channel = Channel,
                                             exchange = Exch,
                                             sroute = SRoutKey}} = State) ->
     ?DBG("Message: ~p", [Msg]),
 	Payload = term_to_binary(Msg),
-	lib_amqp:publish(Channel, Exch, SRoutKey, Payload),
+    amqp_channel:call(Channel,
+                      #'basic.publish'{exchange    = Exch,
+                                       routing_key = SRoutKey},
+                      #amqp_msg{props   = #'P_basic'{},
+                                payload = Payload}),
     {noreply, State};
 handle_info(Info, State) ->
     ?DBG("Handle Info noreply: ~p, ~p", [Info, State]),

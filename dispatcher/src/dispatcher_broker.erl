@@ -5,8 +5,7 @@
 
 -include("dispatcher.hrl").
 
--include_lib("rabbitmq_server/include/rabbit.hrl").
--include_lib("rabbitmq_server/include/rabbit_framing.hrl").
+-include_lib("rabbitmq_client/include/amqp_client.hrl").
 
 -export([start_link/0]).
 
@@ -46,14 +45,30 @@ init([]) ->
 
     Exch = <<"dispatcher.adapter">>, Queue = <<"dispatcher.main">>, RoutKey = <<"dispatcher.main">>,
 
-    Connection = amqp_connection:start(User, Password, Host, Realm),
-    Channel = lib_amqp:start_channel(Connection),
+    AP = #amqp_params{username = User,
+                      password = Password,
+                      virtual_host = Realm,
+                      host = Host},
 
-    lib_amqp:declare_exchange(Channel, Exch),
-    lib_amqp:declare_queue(Channel, Queue),
-    lib_amqp:bind_queue(Channel, Exch, Queue, RoutKey),
+    Connection = amqp_connection:start_network(AP),
+    Channel = amqp_connection:open_channel(Connection),
 
-    Tag = lib_amqp:subscribe(Channel, Queue, self()),
+    amqp_channel:call(
+      Channel, #'exchange.declare'{exchange    = Exch,
+                                   auto_delete = true}),
+
+    amqp_channel:call(
+      Channel, #'queue.declare'{queue       = Queue,
+                                auto_delete = true}),
+
+    amqp_channel:call(
+      Channel, #'queue.bind'{queue       = Queue,
+                             routing_key = RoutKey,
+                             exchange    = Exch}),
+
+    Tag = amqp_channel:subscribe(
+            Channel, #'basic.consume'{queue = Queue},
+            self()),
     ?DBG("Tag: ~p", [Tag]),
 
 
@@ -84,7 +99,7 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
                               delivery_tag = DeliveryTag,
                               exchange = Exch,
                               routing_key = RK},
-             #content{payload_fragments_rev = [Data]} = Content},
+             #amqp_msg{payload = Data} = Content},
             #state{conn = #conn{channel = Channel}, conf = Conf} = State) ->
     ?DBG("ConsumerTag: ~p"
          "~nDeliveryTag: ~p"

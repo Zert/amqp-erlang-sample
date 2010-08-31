@@ -5,8 +5,7 @@
 
 -include("dispatcher.hrl").
 
--include_lib("rabbitmq_server/include/rabbit.hrl").
--include_lib("rabbitmq_server/include/rabbit_framing.hrl").
+-include_lib("rabbitmq_client/include/amqp_client.hrl").
 
 -export([start_link/1]).
 
@@ -44,10 +43,18 @@ init(Args) ->
     case proplists:get_value(channel, Args) of
         Channel when is_pid(Channel) ->
             Exch = proplists:get_value(exchange, Args),
-            lib_amqp:declare_queue(Channel, Queue),
-            lib_amqp:bind_queue(Channel, Exch, Queue, SRoutKey),
 
-            Tag = lib_amqp:subscribe(Channel, Queue, self()),
+            amqp_channel:call(
+              Channel, #'queue.declare'{queue       = Queue,
+                                        auto_delete = true}),
+
+            amqp_channel:call(
+              Channel, #'queue.bind'{queue       = Queue,
+                                     routing_key = SRoutKey,
+                                     exchange    = Exch}),
+            Tag = amqp_channel:subscribe(
+                    Channel, #'basic.consume'{queue = Queue},
+                    self()),
             {ok, state_init, #state{channel = Channel,
                                     croute = CRoutKey,
                                     tag = Tag
@@ -76,7 +83,7 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
                               delivery_tag = DeliveryTag,
                               exchange = Exch,
                               routing_key = RK},
-             #content{payload_fragments_rev = RevData} = Content},
+             #amqp_msg{payload = Data} = Content},
             StateName,
             #state{channel = Channel, croute = CRoutKey} = StateData) ->
     ?DBG("ConsumerTag: ~p"
@@ -86,12 +93,14 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
          "~nContent: ~p"
          "~n",
          [CTag, DeliveryTag, Exch, RK, Content]),
-    Data = iolist_to_binary(lists:reverse(RevData)),
     D = try binary_to_term(Data) catch _:_ -> error end,
     ?INFO("Data: ~p", [D]),
     Reply = term_to_binary({reply, D}),
-	lib_amqp:publish(Channel, Exch, CRoutKey, Reply),
-
+    amqp_channel:call(Channel,
+                      #'basic.publish'{exchange    = Exch,
+                                       routing_key = CRoutKey},
+                      #amqp_msg{props   = #'P_basic'{},
+                                payload = Reply}),
     {next_state, StateName, StateData};
 handle_info(Info, StateName, StateData) ->
     ?DBG("Handle Info: ~p, ~p, ~p", [Info, StateName, StateData]),
