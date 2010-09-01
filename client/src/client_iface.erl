@@ -5,7 +5,7 @@
 
 -include("client.hrl").
 
--include_lib("rabbitmq_client/include/amqp_client.hrl").
+-include_lib("amqp_client/include/amqp_client.hrl").
 
 -export([start_link/0]).
 
