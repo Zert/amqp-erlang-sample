@@ -8,7 +8,7 @@ fi
 
 HOSTNAME=`hostname`
 HOST=${HOSTNAME:-localhost}
-SNAME="$APPNAME"@"$HOST"
+SNAME="$APPNAME""$$"@"$HOST"
 
 erl -pa ebin \
 	-s $APPNAME \
