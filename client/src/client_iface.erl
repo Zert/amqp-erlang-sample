@@ -80,6 +80,21 @@ init(_) ->
             self()),
     ?DBG("Tag: ~p", [Tag]),
 
+
+    %% Fanout
+    FExch = <<"dispatcher.ctl">>,
+    FQueue = <<"client.fanout.", Uniq/binary>>,
+    amqp_channel:call(
+      Channel, #'queue.declare'{queue       = FQueue,
+                                auto_delete = true}),
+    amqp_channel:call(
+      Channel, #'queue.bind'{queue       = FQueue,
+                             exchange    = FExch}),
+
+    amqp_channel:subscribe(
+      Channel, #'basic.consume'{queue = FQueue},
+      self()),
+
     ?DBG("Client iface started", []),
     self() ! {register},
     {ok, #state{conn = #conn{channel = Channel,

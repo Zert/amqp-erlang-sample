@@ -19,6 +19,7 @@
 -record(conn, {
           channel    :: pid(),
           exchange   :: binary(),
+          fexchange  :: binary(),
           queue      :: binary(),
           route      :: binary(),
           tag        :: binary()
@@ -57,6 +58,12 @@ init([]) ->
       Channel, #'exchange.declare'{exchange    = Exch,
                                    auto_delete = true}),
 
+    FExch = <<"dispatcher.ctl">>,
+    amqp_channel:call(
+      Channel, #'exchange.declare'{exchange    = FExch,
+                                   type = <<"fanout">>,
+                                   auto_delete = true}),
+
     amqp_channel:call(
       Channel, #'queue.declare'{queue       = Queue,
                                 auto_delete = true}),
@@ -75,6 +82,7 @@ init([]) ->
     ?DBG("Broker started", []),
     {ok, #state{conn = #conn{channel = Channel,
                              exchange = Exch,
+                             fexchange = FExch,
                              queue = Queue,
                              route = RoutKey},
                 conf = #conf{user = User,
@@ -120,6 +128,15 @@ handle_info({#'basic.deliver'{consumer_tag = CTag,
         _ ->
             ?ERR("Unknown Data: ~p", [D])
     end,
+    {noreply, State};
+handle_info({fanout, Msg}, #state{conn = #conn{channel = Channel,
+                                               fexchange = FExch}} = State) ->
+    ?DBG("Send Fanout message: ~p, ~p", [Msg, State]),
+    Payload = term_to_binary(Msg),
+    amqp_channel:call(Channel,
+                      #'basic.publish'{exchange    = FExch},
+                      #amqp_msg{props   = #'P_basic'{},
+                                payload = Payload}),
     {noreply, State};
 handle_info(Info, State) ->
     ?DBG("Handle Info noreply: ~p, ~p", [Info, State]),
